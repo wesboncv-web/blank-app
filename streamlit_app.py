@@ -14,12 +14,12 @@ if "patients" not in st.session_state:
             "Patient ID": "PAT-1001",
             "Next Sync Date": datetime.today().date(),
             "Cycle": 30,
-            "Rx Number": "RX-45892",
+            "Refills": 5,
             "Medication": "Lisinopril 10mg",
             "Days Supply": 30,
             "Quantity": 30,
             "Status": "Active",
-            "Condition": "HTN" # Now includes adherence tracking
+            "Condition": "HTN" 
         }
     ]
 
@@ -48,23 +48,30 @@ with tab_fill:
     # Adherence Color Legend
     st.markdown("**Adherence Flag Legend:** 🟦 **HTN** (Light Blue) | 🟩 **Diabetes** (Light Green) | 🟨 **Dyslipidemia** (Light Yellow)")
     
-    target_fill_date = st.date_input("Select Target Fill Date", datetime.today())
+    col_date, col_filt = st.columns(2)
+    with col_date:
+        target_fill_date = st.date_input("Select Target Fill Date", datetime.today())
+    with col_filt:
+        adherence_filter = st.selectbox("Filter by Adherence Condition", ["All Patients", "HTN", "Diabetes", "Dyslipidemia", "None"])
     
     fill_candidates = []
     
     for idx, p in enumerate(st.session_state.patients):
         if p["Status"] == "Active" and p["Next Sync Date"] == target_fill_date:
-            fill_candidates.append({
-                "Index": idx,
-                "Patient ID": p["Patient ID"],
-                "Rx Number": p["Rx Number"],
-                "Medication": p["Medication"],
-                "Condition": p.get("Condition", "None"),
-                "Days Supply": p["Days Supply"],
-                "Quantity": p["Quantity"],
-                "Cycle": p["Cycle"],
-                "Scheduled Date": p["Next Sync Date"]
-            })
+            cond = p.get("Condition", "None")
+            # Apply Filter Logic
+            if adherence_filter == "All Patients" or adherence_filter == cond:
+                fill_candidates.append({
+                    "Index": idx,
+                    "Patient ID": p["Patient ID"],
+                    "Medication": p["Medication"],
+                    "Refills": p.get("Refills", 0),
+                    "Condition": cond,
+                    "Days Supply": p["Days Supply"],
+                    "Quantity": p["Quantity"],
+                    "Cycle": p["Cycle"],
+                    "Scheduled Date": p["Next Sync Date"]
+                })
             
     df_fill = pd.DataFrame(fill_candidates)
     
@@ -128,13 +135,17 @@ with tab_fill:
             
             st.session_state.dispense_history.append({
                 "Patient ID": pat["Patient ID"],
-                "Rx Number": pat["Rx Number"],
                 "Medication": pat["Medication"],
                 "Quantity Dispensed": pat["Quantity"],
                 "Days Supply": pat["Days Supply"],
                 "Dispensed Date": datetime.today().date()
             })
             
+            # Automatically subtract a refill if there are refills left
+            if pat.get("Refills", 0) > 0:
+                st.session_state.patients[selected_idx]["Refills"] -= 1
+            
+            # Calculate next sync date
             days_sup = int(pat["Days Supply"])
             if days_sup >= 30:
                 next_sync = pat["Next Sync Date"] + timedelta(days=days_sup - 2)
@@ -142,10 +153,12 @@ with tab_fill:
                 next_sync = pat["Next Sync Date"] + timedelta(days=days_sup)
                 
             st.session_state.patients[selected_idx]["Next Sync Date"] = next_sync
-            st.success(f"Dispensed successfully! Next sync date automatically updated to {next_sync}.")
+            
+            remaining_refills = st.session_state.patients[selected_idx]["Refills"]
+            st.success(f"Dispensed successfully! Next sync date updated to {next_sync}. Remaining Refills: {remaining_refills}")
             st.rerun()
     else:
-        st.info(f"No patients scheduled for fill on {target_fill_date}.")
+        st.info(f"No patients scheduled for fill on {target_fill_date} under the '{adherence_filter}' filter.")
 
 # ---------------------------------------------------------
 # TAB 2: Standard Patient Management 
@@ -162,22 +175,24 @@ with tab_manage:
         st.markdown("### ➕ Register New Patient")
         with st.form("new_patient_form"):
             p_id = st.text_input("New Patient ID (e.g., PAT-5542)")
-            rx_num = st.text_input("Rx Number")
             med_name = st.text_input("Medication Name & Strength")
-            col1, col2 = st.columns(2)
-            with col1:
+            
+            col_ref, col_ds, col_qty = st.columns(3)
+            with col_ref:
+                refills = st.number_input("Amount of Refills", min_value=0, value=11, key="new_ref")
+            with col_ds:
                 days_supply = st.number_input("Days Supply", min_value=1, value=30, key="new_ds")
-            with col2:
+            with col_qty:
                 quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="new_qty")
                 
             cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="new_cycle")
             sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="new_date")
             
             if st.form_submit_button("Save New Patient & Rx"):
-                if p_id and rx_num and med_name:
+                if p_id and med_name:
                     st.session_state.patients.append({
                         "Patient ID": p_id, "Next Sync Date": sync_date, "Cycle": cycle_opt,
-                        "Rx Number": rx_num, "Medication": med_name, "Days Supply": int(days_supply),
+                        "Refills": int(refills), "Medication": med_name, "Days Supply": int(days_supply),
                         "Quantity": int(quantity), "Status": "Active", "Condition": "None"
                     })
                     st.success("Patient created!")
@@ -187,45 +202,47 @@ with tab_manage:
     else:
         st.markdown(f"### Profile: `{selected_patient}`")
         patient_records = [p for p in st.session_state.patients if p["Patient ID"] == selected_patient]
-        st.dataframe(pd.DataFrame(patient_records)[["Rx Number", "Medication", "Days Supply", "Quantity", "Cycle", "Next Sync Date"]], use_container_width=True)
+        st.dataframe(pd.DataFrame(patient_records)[["Medication", "Refills", "Days Supply", "Quantity", "Cycle", "Next Sync Date"]], use_container_width=True)
         
         action = st.radio("What would you like to do?", ["➕ Add New Medication to this Patient", "✏️ Edit an Existing Medication"], key="std_action")
         
         if action == "➕ Add New Medication to this Patient":
             with st.form("add_med_form"):
-                rx_num = st.text_input("Rx Number")
                 med_name = st.text_input("Medication Name & Strength")
-                col1, col2 = st.columns(2)
-                with col1:
+                col_ref, col_ds, col_qty = st.columns(3)
+                with col_ref:
+                    refills = st.number_input("Amount of Refills", min_value=0, value=11, key="add_ref")
+                with col_ds:
                     days_supply = st.number_input("Days Supply", min_value=1, value=30, key="add_ds")
-                with col2:
+                with col_qty:
                     quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="add_qty")
                 cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="add_cycle")
                 sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="add_date")
                 
                 if st.form_submit_button("➕ Add Medication"):
-                    if rx_num and med_name:
+                    if med_name:
                         st.session_state.patients.append({
                             "Patient ID": selected_patient, "Next Sync Date": sync_date, "Cycle": cycle_opt,
-                            "Rx Number": rx_num, "Medication": med_name, "Days Supply": int(days_supply),
+                            "Refills": int(refills), "Medication": med_name, "Days Supply": int(days_supply),
                             "Quantity": int(quantity), "Status": "Active", "Condition": "None"
                         })
                         st.success("Medication added!")
                         st.rerun()
                         
         elif action == "✏️ Edit an Existing Medication":
-            rx_to_edit = st.selectbox("Select which Rx to edit", [p["Rx Number"] + " - " + p["Medication"] for p in patient_records])
-            if rx_to_edit:
-                selected_rx_num = rx_to_edit.split(" - ")[0]
-                med_idx = next(i for i, p in enumerate(st.session_state.patients) if p["Rx Number"] == selected_rx_num)
+            med_to_edit = st.selectbox("Select which Medication to edit", [p["Medication"] for p in patient_records])
+            if med_to_edit:
+                med_idx = next(i for i, p in enumerate(st.session_state.patients) if p["Medication"] == med_to_edit and p["Patient ID"] == selected_patient)
                 med_data = st.session_state.patients[med_idx]
                 
                 with st.form("edit_med_form"):
                     new_med = st.text_input("Medication Name & Strength", value=med_data["Medication"])
-                    col1, col2 = st.columns(2)
-                    with col1:
+                    col_ref, col_ds, col_qty = st.columns(3)
+                    with col_ref:
+                        new_ref = st.number_input("Amount of Refills", min_value=0, value=int(med_data.get("Refills", 0)), key="edit_ref")
+                    with col_ds:
                         new_ds = st.number_input("Days Supply", min_value=1, value=int(med_data["Days Supply"]))
-                    with col2:
+                    with col_qty:
                         new_qty = st.number_input("Quantity / Amount", min_value=1, value=int(med_data["Quantity"]))
                         
                     current_cycle = med_data.get("Cycle", 30)
@@ -235,7 +252,7 @@ with tab_manage:
                     
                     if st.form_submit_button("✏️ Save Changes"):
                         st.session_state.patients[med_idx].update({
-                            "Medication": new_med, "Days Supply": new_ds, "Quantity": new_qty,
+                            "Medication": new_med, "Refills": new_ref, "Days Supply": new_ds, "Quantity": new_qty,
                             "Cycle": new_cycle, "Next Sync Date": new_date
                         })
                         st.success("Updated successfully!")
@@ -257,25 +274,26 @@ with tab_adherence:
         st.markdown("### ➕ Register New Adherence Patient")
         with st.form("new_adh_patient_form"):
             p_id = st.text_input("New Patient ID (e.g., PAT-5542)", key="adh_pid")
-            rx_num = st.text_input("Rx Number", key="adh_rx")
             med_name = st.text_input("Medication Name & Strength", key="adh_med")
             
             adh_condition = st.selectbox("🔴 Adherence Condition (Color Code)", CONDITION_OPTIONS, index=1, key="adh_cond_new")
             
-            col1, col2 = st.columns(2)
-            with col1:
+            col_ref, col_ds, col_qty = st.columns(3)
+            with col_ref:
+                refills = st.number_input("Amount of Refills", min_value=0, value=11, key="adh_new_ref")
+            with col_ds:
                 days_supply = st.number_input("Days Supply", min_value=1, value=30, key="adh_new_ds")
-            with col2:
+            with col_qty:
                 quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="adh_new_qty")
                 
             cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="adh_new_cycle")
             sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="adh_new_date")
             
             if st.form_submit_button("Save Adherence Patient & Rx"):
-                if p_id and rx_num and med_name:
+                if p_id and med_name:
                     st.session_state.patients.append({
                         "Patient ID": p_id, "Next Sync Date": sync_date, "Cycle": cycle_opt,
-                        "Rx Number": rx_num, "Medication": med_name, "Days Supply": int(days_supply),
+                        "Refills": int(refills), "Medication": med_name, "Days Supply": int(days_supply),
                         "Quantity": int(quantity), "Status": "Active", "Condition": adh_condition
                     })
                     st.success("Adherence Patient created!")
@@ -285,39 +303,39 @@ with tab_adherence:
     else:
         st.markdown(f"### Adherence Profile: `{selected_patient_adh}`")
         patient_records_adh = [p for p in st.session_state.patients if p["Patient ID"] == selected_patient_adh]
-        st.dataframe(pd.DataFrame(patient_records_adh)[["Rx Number", "Medication", "Condition", "Days Supply", "Next Sync Date"]], use_container_width=True)
+        st.dataframe(pd.DataFrame(patient_records_adh)[["Medication", "Condition", "Refills", "Days Supply", "Next Sync Date"]], use_container_width=True)
         
         action_adh = st.radio("What would you like to do?", ["➕ Add Adherence Rx to this Patient", "✏️ Edit an Existing Rx / Condition"], key="adh_action")
         
         if action_adh == "➕ Add Adherence Rx to this Patient":
             with st.form("add_adh_med_form"):
-                rx_num = st.text_input("Rx Number", key="adh_add_rx")
                 med_name = st.text_input("Medication Name & Strength", key="adh_add_med")
                 adh_condition = st.selectbox("🔴 Adherence Condition (Color Code)", CONDITION_OPTIONS, index=1, key="adh_cond_add")
                 
-                col1, col2 = st.columns(2)
-                with col1:
+                col_ref, col_ds, col_qty = st.columns(3)
+                with col_ref:
+                    refills = st.number_input("Amount of Refills", min_value=0, value=11, key="adh_add_ref")
+                with col_ds:
                     days_supply = st.number_input("Days Supply", min_value=1, value=30, key="adh_add_ds")
-                with col2:
+                with col_qty:
                     quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="adh_add_qty")
                 cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="adh_add_cycle")
                 sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="adh_add_date")
                 
                 if st.form_submit_button("➕ Add Adherence Medication"):
-                    if rx_num and med_name:
+                    if med_name:
                         st.session_state.patients.append({
                             "Patient ID": selected_patient_adh, "Next Sync Date": sync_date, "Cycle": cycle_opt,
-                            "Rx Number": rx_num, "Medication": med_name, "Days Supply": int(days_supply),
+                            "Refills": int(refills), "Medication": med_name, "Days Supply": int(days_supply),
                             "Quantity": int(quantity), "Status": "Active", "Condition": adh_condition
                         })
                         st.success("Adherence Medication added!")
                         st.rerun()
                         
         elif action_adh == "✏️ Edit an Existing Rx / Condition":
-            rx_to_edit = st.selectbox("Select which Rx to edit", [p["Rx Number"] + " - " + p["Medication"] for p in patient_records_adh], key="adh_edit_sel")
-            if rx_to_edit:
-                selected_rx_num = rx_to_edit.split(" - ")[0]
-                med_idx = next(i for i, p in enumerate(st.session_state.patients) if p["Rx Number"] == selected_rx_num)
+            med_to_edit = st.selectbox("Select which Medication to edit", [p["Medication"] for p in patient_records_adh], key="adh_edit_sel")
+            if med_to_edit:
+                med_idx = next(i for i, p in enumerate(st.session_state.patients) if p["Medication"] == med_to_edit and p["Patient ID"] == selected_patient_adh)
                 med_data = st.session_state.patients[med_idx]
                 
                 with st.form("edit_adh_med_form"):
@@ -327,10 +345,12 @@ with tab_adherence:
                     cond_index = CONDITION_OPTIONS.index(current_cond) if current_cond in CONDITION_OPTIONS else 0
                     new_cond = st.selectbox("🔴 Adherence Condition", CONDITION_OPTIONS, index=cond_index, key="adh_cond_edit")
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
+                    col_ref, col_ds, col_qty = st.columns(3)
+                    with col_ref:
+                        new_ref = st.number_input("Amount of Refills", min_value=0, value=int(med_data.get("Refills", 0)), key="adh_edit_ref")
+                    with col_ds:
                         new_ds = st.number_input("Days Supply", min_value=1, value=int(med_data["Days Supply"]), key="adh_edit_ds")
-                    with col2:
+                    with col_qty:
                         new_qty = st.number_input("Quantity / Amount", min_value=1, value=int(med_data["Quantity"]), key="adh_edit_qty")
                         
                     current_cycle = med_data.get("Cycle", 30)
@@ -340,7 +360,7 @@ with tab_adherence:
                     
                     if st.form_submit_button("✏️ Save Changes"):
                         st.session_state.patients[med_idx].update({
-                            "Medication": new_med, "Condition": new_cond, "Days Supply": new_ds, 
+                            "Medication": new_med, "Condition": new_cond, "Refills": new_ref, "Days Supply": new_ds, 
                             "Quantity": new_qty, "Cycle": new_cycle, "Next Sync Date": new_date
                         })
                         st.success("Updated successfully!")
@@ -370,8 +390,8 @@ with tab_overdue:
             days_missed = (today - p["Next Sync Date"]).days
             overdue_list.append({
                 "Patient ID": p["Patient ID"],
-                "Rx Number": p["Rx Number"],
                 "Medication": p["Medication"],
+                "Refills": p.get("Refills", 0),
                 "Condition": p.get("Condition", "None"),
                 "Scheduled Date": p["Next Sync Date"],
                 "Days Overdue": f"{days_missed} Days"
