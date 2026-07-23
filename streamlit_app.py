@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Farmacia Melmar Med Sync", layout="wide")
 
-st.title("💊 Farmacia Melmar Med Sync Manager")
+st.title("Farmacia Melmar Med Sync Manager")
 st.caption("HIPAA-Safe Mode: Patient ID tracking with automated cycle scheduling and dispensing logs.")
 
 # Initialize Session State
@@ -12,7 +12,7 @@ if "patients" not in st.session_state:
     st.session_state.patients = [
         {
             "Patient ID": "PAT-1001",
-            "Next Sync Date": datetime.today().date(),
+            "Next Sync Date": datetime.today().date() - timedelta(days=4), # Set to the past to demonstrate the Overdue feature
             "Cycle": 30,
             "Rx Number": "RX-45892",
             "Medication": "Lisinopril 10mg",
@@ -25,26 +25,25 @@ if "patients" not in st.session_state:
 if "dispense_history" not in st.session_state:
     st.session_state.dispense_history = []
 
-# --- NEW: Master list of Cycle Options so it's easy to add more later! ---
 CYCLE_OPTIONS = [28, 30, 60, 84, 88, 90]
 
-# Tabs Layout
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📋 Generate Fill List", 
-    "🧑‍⚕️ Manage Patients & Rx", 
-    "📦 Dispense Log", 
-    "⚙️ Master Registry"
+# Clean, Modern Tabs Layout
+tab_fill, tab_manage, tab_history, tab_overdue, tab_registry = st.tabs([
+    "Fill List Generator", 
+    "Patient Management", 
+    "Dispense History", 
+    "Overdue / Missed Fills",
+    "Master Registry"
 ])
 
 # ---------------------------------------------------------
-# TAB 1: Generate Fill List
+# TAB 1: Generate Fill List & Export Options
 # ---------------------------------------------------------
-with tab1:
+with tab_fill:
     st.subheader("Target Fill Date Generator")
     
     target_fill_date = st.date_input("Select Target Fill Date", datetime.today())
     
-    st.markdown("### Matching Fill List")
     fill_candidates = []
     
     for idx, p in enumerate(st.session_state.patients):
@@ -63,8 +62,37 @@ with tab1:
     df_fill = pd.DataFrame(fill_candidates)
     
     if not df_fill.empty:
-        st.dataframe(df_fill.drop(columns=["Index"]), use_container_width=True)
+        display_df = df_fill.drop(columns=["Index"])
+        st.dataframe(display_df, use_container_width=True)
         
+        # --- NEW: Export & Email Features ---
+        st.divider()
+        col_export, col_email = st.columns(2)
+        
+        with col_export:
+            st.markdown("**Print / Export Options**")
+            csv_data = display_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Fill List as CSV",
+                data=csv_data,
+                file_name=f'Melmar_Fill_List_{target_fill_date}.csv',
+                mime='text/csv',
+                use_container_width=True
+            )
+            
+        with col_email:
+            st.markdown("**Send List to Email**")
+            with st.form("email_form"):
+                email_address = st.text_input("Destination Email", placeholder="pharmacist@example.com")
+                if st.form_submit_button("Send via Email", use_container_width=True):
+                    if email_address:
+                        # This simulates a successful email send for the prototype
+                        st.success(f"Success! The fill list for {target_fill_date} was securely routed to {email_address}.")
+                    else:
+                        st.error("Please enter a valid email address.")
+        st.divider()
+        
+        # --- Process & Dispense ---
         st.markdown("### Process & Dispense")
         selected_idx = st.selectbox(
             "Select Patient Index to Dispense", 
@@ -85,7 +113,7 @@ with tab1:
                 "Dispensed Date": datetime.today().date()
             })
             
-            # Calculate next sync date (automated rules: 28 days or 30 days supply = 2 days prior)
+            # Calculate next sync date
             days_sup = int(pat["Days Supply"])
             if days_sup >= 30:
                 next_sync = pat["Next Sync Date"] + timedelta(days=days_sup - 2)
@@ -99,19 +127,18 @@ with tab1:
         st.info(f"No patients scheduled for fill on {target_fill_date}.")
 
 # ---------------------------------------------------------
-# TAB 2: Manage Patients & Rx (New ➕ and ✏️ Features)
+# TAB 2: Manage Patients & Rx (Cleaned Interface)
 # ---------------------------------------------------------
-with tab2:
+with tab_manage:
     st.subheader("Patient Management")
     
-    # Get a list of unique patient IDs currently in the system
     unique_patients = list(set([p["Patient ID"] for p in st.session_state.patients]))
     unique_patients.insert(0, "--- Create New Patient ---")
     
     selected_patient = st.selectbox("Select Patient", unique_patients)
     
     if selected_patient == "--- Create New Patient ---":
-        st.markdown("### ➕ Register New Patient")
+        st.markdown("### Register New Patient")
         with st.form("new_patient_form"):
             p_id = st.text_input("New Patient ID (e.g., PAT-5542)")
             rx_num = st.text_input("Rx Number (e.g., RX-99881)")
@@ -122,7 +149,6 @@ with tab2:
             with col2:
                 quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="new_qty")
                 
-            # Default to index 1 (which is 30 in our list)
             cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="new_cycle")
             sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="new_date")
             
@@ -139,16 +165,14 @@ with tab2:
                     st.error("Please fill out Patient ID, Rx Number, and Medication fields.")
                     
     else:
-        # Show existing patient details
         st.markdown(f"### Profile: `{selected_patient}`")
         patient_records = [p for p in st.session_state.patients if p["Patient ID"] == selected_patient]
         
-        # Display the cycle in the profile table too
         st.dataframe(pd.DataFrame(patient_records)[["Rx Number", "Medication", "Days Supply", "Quantity", "Cycle", "Next Sync Date"]], use_container_width=True)
         
-        action = st.radio("What would you like to do?", ["➕ Add New Medication to this Patient", "✏️ Edit an Existing Medication"])
+        action = st.radio("What would you like to do?", ["Add New Medication to this Patient", "Edit an Existing Medication"])
         
-        if action == "➕ Add New Medication to this Patient":
+        if action == "Add New Medication to this Patient":
             with st.form("add_med_form"):
                 st.markdown(f"**Add Rx for {selected_patient}**")
                 rx_num = st.text_input("Rx Number")
@@ -162,7 +186,7 @@ with tab2:
                 cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="add_cycle")
                 sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="add_date")
                 
-                if st.form_submit_button("➕ Add Medication"):
+                if st.form_submit_button("Add Medication"):
                     if rx_num and med_name:
                         st.session_state.patients.append({
                             "Patient ID": selected_patient, "Next Sync Date": sync_date, "Cycle": cycle_opt,
@@ -174,12 +198,11 @@ with tab2:
                     else:
                         st.error("Rx Number and Medication are required.")
                         
-        elif action == "✏️ Edit an Existing Medication":
+        elif action == "Edit an Existing Medication":
             rx_to_edit = st.selectbox("Select which Rx to edit", [p["Rx Number"] + " - " + p["Medication"] for p in patient_records])
             
             if rx_to_edit:
                 selected_rx_num = rx_to_edit.split(" - ")[0]
-                # Find exact index in the master list
                 med_idx = next(i for i, p in enumerate(st.session_state.patients) if p["Rx Number"] == selected_rx_num)
                 med_data = st.session_state.patients[med_idx]
                 
@@ -192,14 +215,13 @@ with tab2:
                     with col2:
                         new_qty = st.number_input("Quantity / Amount", min_value=1, value=int(med_data["Quantity"]))
                         
-                    # Find the current cycle in the list, or default to 30 if it isn't found
                     current_cycle = med_data.get("Cycle", 30)
                     cycle_index = CYCLE_OPTIONS.index(current_cycle) if current_cycle in CYCLE_OPTIONS else 1
                     
                     new_cycle = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=cycle_index)
                     new_date = st.date_input("Next Sync Date", value=med_data["Next Sync Date"])
                     
-                    if st.form_submit_button("✏️ Save Changes"):
+                    if st.form_submit_button("Save Changes"):
                         st.session_state.patients[med_idx].update({
                             "Medication": new_med,
                             "Days Supply": new_ds,
@@ -213,7 +235,7 @@ with tab2:
 # ---------------------------------------------------------
 # TAB 3: Dispense Log
 # ---------------------------------------------------------
-with tab3:
+with tab_history:
     st.subheader("Dispensed Medications History")
     df_history = pd.DataFrame(st.session_state.dispense_history)
     if not df_history.empty:
@@ -222,8 +244,36 @@ with tab3:
         st.info("No medications dispensed yet.")
 
 # ---------------------------------------------------------
-# TAB 4: Master Registry
+# TAB 4: NEW - Missed / Overdue Fills
 # ---------------------------------------------------------
-with tab4:
+with tab_overdue:
+    st.subheader("Missed / Overdue Syncs")
+    
+    today = datetime.today().date()
+    overdue_list = []
+    
+    for p in st.session_state.patients:
+        if p["Status"] == "Active" and p["Next Sync Date"] < today:
+            days_missed = (today - p["Next Sync Date"]).days
+            overdue_list.append({
+                "Patient ID": p["Patient ID"],
+                "Rx Number": p["Rx Number"],
+                "Medication": p["Medication"],
+                "Scheduled Date": p["Next Sync Date"],
+                "Days Overdue": f"{days_missed} Days"
+            })
+            
+    df_overdue = pd.DataFrame(overdue_list)
+    
+    if not df_overdue.empty:
+        st.error(f"Attention: {len(df_overdue)} medications are currently past their sync date.")
+        st.dataframe(df_overdue, use_container_width=True)
+    else:
+        st.success("Great job! There are no missed or overdue fills.")
+
+# ---------------------------------------------------------
+# TAB 5: Master Registry
+# ---------------------------------------------------------
+with tab_registry:
     st.subheader("Master Patient Sync Registry")
     st.dataframe(pd.DataFrame(st.session_state.patients), use_container_width=True)
