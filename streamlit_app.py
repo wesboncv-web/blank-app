@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Pharmacy Med Sync Manager", layout="wide")
+st.set_page_config(page_title="Farmacia Melmar Med Sync", layout="wide")
 
-st.title("💊 Pharmacy Med Sync & Refill Manager")
+st.title("💊 Farmacia Melmar Med Sync Manager")
 st.caption("HIPAA-Safe Mode: Patient ID tracking with automated cycle scheduling and dispensing logs.")
 
 # Initialize Session State
@@ -28,7 +28,7 @@ if "dispense_history" not in st.session_state:
 # Tabs Layout
 tab1, tab2, tab3, tab4 = st.tabs([
     "📋 Generate Fill List", 
-    "➕ Add / Edit Patient", 
+    "🧑‍⚕️ Manage Patients & Rx", 
     "📦 Dispense Log", 
     "⚙️ Master Registry"
 ])
@@ -96,42 +96,110 @@ with tab1:
         st.info(f"No patients scheduled for fill on {target_fill_date}.")
 
 # ---------------------------------------------------------
-# TAB 2: Add / Edit Patient & Medications
+# TAB 2: Manage Patients & Rx (New ➕ and ✏️ Features)
 # ---------------------------------------------------------
 with tab2:
-    st.subheader("Manage Patient & Prescription Details")
+    st.subheader("Patient Management")
     
-    with st.form("patient_form"):
-        p_id = st.text_input("Patient ID (e.g., PAT-5542)")
-        rx_num = st.text_input("Rx Number (e.g., RX-99881)")
-        med_name = st.text_input("Medication Name & Strength", placeholder="e.g., Metformin 500mg")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            days_supply = st.number_input("Days Supply", min_value=1, value=30)
-        with col2:
-            quantity = st.number_input("Quantity / Amount", min_value=1, value=30)
+    # Get a list of unique patient IDs currently in the system
+    unique_patients = list(set([p["Patient ID"] for p in st.session_state.patients]))
+    unique_patients.insert(0, "--- Create New Patient ---")
+    
+    selected_patient = st.selectbox("Select Patient", unique_patients)
+    
+    if selected_patient == "--- Create New Patient ---":
+        st.markdown("### ➕ Register New Patient")
+        with st.form("new_patient_form"):
+            p_id = st.text_input("New Patient ID (e.g., PAT-5542)")
+            rx_num = st.text_input("Rx Number (e.g., RX-99881)")
+            med_name = st.text_input("Medication Name & Strength", placeholder="e.g., Metformin 500mg")
+            col1, col2 = st.columns(2)
+            with col1:
+                days_supply = st.number_input("Days Supply", min_value=1, value=30, key="new_ds")
+            with col2:
+                quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="new_qty")
+                
+            cycle_opt = st.selectbox("Cycle Type", [30, 90, 28], key="new_cycle")
+            sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="new_date")
             
-        cycle_opt = st.selectbox("Cycle Type", [30, 90, 28])
-        sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30))
+            if st.form_submit_button("Save New Patient & Rx"):
+                if p_id and rx_num and med_name:
+                    st.session_state.patients.append({
+                        "Patient ID": p_id, "Next Sync Date": sync_date, "Cycle": cycle_opt,
+                        "Rx Number": rx_num, "Medication": med_name, "Days Supply": int(days_supply),
+                        "Quantity": int(quantity), "Status": "Active"
+                    })
+                    st.success(f"Created profile for {p_id} successfully!")
+                    st.rerun()
+                else:
+                    st.error("Please fill out Patient ID, Rx Number, and Medication fields.")
+                    
+    else:
+        # Show existing patient details
+        st.markdown(f"### Profile: `{selected_patient}`")
+        patient_records = [p for p in st.session_state.patients if p["Patient ID"] == selected_patient]
         
-        submitted = st.form_submit_button("Save Patient & Rx")
+        st.dataframe(pd.DataFrame(patient_records)[["Rx Number", "Medication", "Days Supply", "Quantity", "Next Sync Date"]], use_container_width=True)
         
-        if submitted:
-            if p_id and rx_num and med_name:
-                st.session_state.patients.append({
-                    "Patient ID": p_id,
-                    "Next Sync Date": sync_date,
-                    "Cycle": cycle_opt,
-                    "Rx Number": rx_num,
-                    "Medication": med_name,
-                    "Days Supply": int(days_supply),
-                    "Quantity": int(quantity),
-                    "Status": "Active"
-                })
-                st.success(f"Added prescription for {p_id} successfully!")
-            else:
-                st.error("Please fill out Patient ID, Rx Number, and Medication fields.")
+        action = st.radio("What would you like to do?", ["➕ Add New Medication to this Patient", "✏️ Edit an Existing Medication"])
+        
+        if action == "➕ Add New Medication to this Patient":
+            with st.form("add_med_form"):
+                st.markdown(f"**Add Rx for {selected_patient}**")
+                rx_num = st.text_input("Rx Number")
+                med_name = st.text_input("Medication Name & Strength")
+                col1, col2 = st.columns(2)
+                with col1:
+                    days_supply = st.number_input("Days Supply", min_value=1, value=30, key="add_ds")
+                with col2:
+                    quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="add_qty")
+                    
+                cycle_opt = st.selectbox("Cycle Type", [30, 90, 28], key="add_cycle")
+                sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="add_date")
+                
+                if st.form_submit_button("➕ Add Medication"):
+                    if rx_num and med_name:
+                        st.session_state.patients.append({
+                            "Patient ID": selected_patient, "Next Sync Date": sync_date, "Cycle": cycle_opt,
+                            "Rx Number": rx_num, "Medication": med_name, "Days Supply": int(days_supply),
+                            "Quantity": int(quantity), "Status": "Active"
+                        })
+                        st.success(f"Added {med_name} to {selected_patient}'s profile!")
+                        st.rerun()
+                    else:
+                        st.error("Rx Number and Medication are required.")
+                        
+        elif action == "✏️ Edit an Existing Medication":
+            rx_to_edit = st.selectbox("Select which Rx to edit", [p["Rx Number"] + " - " + p["Medication"] for p in patient_records])
+            
+            if rx_to_edit:
+                selected_rx_num = rx_to_edit.split(" - ")[0]
+                # Find exact index in the master list
+                med_idx = next(i for i, p in enumerate(st.session_state.patients) if p["Rx Number"] == selected_rx_num)
+                med_data = st.session_state.patients[med_idx]
+                
+                with st.form("edit_med_form"):
+                    st.markdown(f"**Editing {rx_to_edit}**")
+                    new_med = st.text_input("Medication Name & Strength", value=med_data["Medication"])
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        new_ds = st.number_input("Days Supply", min_value=1, value=int(med_data["Days Supply"]))
+                    with col2:
+                        new_qty = st.number_input("Quantity / Amount", min_value=1, value=int(med_data["Quantity"]))
+                        
+                    new_cycle = st.selectbox("Cycle Type", [30, 90, 28], index=[30, 90, 28].index(med_data["Cycle"]))
+                    new_date = st.date_input("Next Sync Date", value=med_data["Next Sync Date"])
+                    
+                    if st.form_submit_button("✏️ Save Changes"):
+                        st.session_state.patients[med_idx].update({
+                            "Medication": new_med,
+                            "Days Supply": new_ds,
+                            "Quantity": new_qty,
+                            "Cycle": new_cycle,
+                            "Next Sync Date": new_date
+                        })
+                        st.success("Prescription updated successfully!")
+                        st.rerun()
 
 # ---------------------------------------------------------
 # TAB 3: Dispense Log
