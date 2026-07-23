@@ -25,6 +25,9 @@ if "patients" not in st.session_state:
 if "dispense_history" not in st.session_state:
     st.session_state.dispense_history = []
 
+# --- NEW: Master list of Cycle Options so it's easy to add more later! ---
+CYCLE_OPTIONS = [28, 30, 60, 84, 88, 90]
+
 # Tabs Layout
 tab1, tab2, tab3, tab4 = st.tabs([
     "📋 Generate Fill List", 
@@ -119,7 +122,8 @@ with tab2:
             with col2:
                 quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="new_qty")
                 
-            cycle_opt = st.selectbox("Cycle Type", [30, 90, 28], key="new_cycle")
+            # Default to index 1 (which is 30 in our list)
+            cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="new_cycle")
             sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="new_date")
             
             if st.form_submit_button("Save New Patient & Rx"):
@@ -139,7 +143,8 @@ with tab2:
         st.markdown(f"### Profile: `{selected_patient}`")
         patient_records = [p for p in st.session_state.patients if p["Patient ID"] == selected_patient]
         
-        st.dataframe(pd.DataFrame(patient_records)[["Rx Number", "Medication", "Days Supply", "Quantity", "Next Sync Date"]], use_container_width=True)
+        # Display the cycle in the profile table too
+        st.dataframe(pd.DataFrame(patient_records)[["Rx Number", "Medication", "Days Supply", "Quantity", "Cycle", "Next Sync Date"]], use_container_width=True)
         
         action = st.radio("What would you like to do?", ["➕ Add New Medication to this Patient", "✏️ Edit an Existing Medication"])
         
@@ -154,7 +159,7 @@ with tab2:
                 with col2:
                     quantity = st.number_input("Quantity / Amount", min_value=1, value=30, key="add_qty")
                     
-                cycle_opt = st.selectbox("Cycle Type", [30, 90, 28], key="add_cycle")
+                cycle_opt = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=1, key="add_cycle")
                 sync_date = st.date_input("Initial Next Sync Date", datetime.today() + timedelta(days=30), key="add_date")
                 
                 if st.form_submit_button("➕ Add Medication"):
@@ -187,7 +192,11 @@ with tab2:
                     with col2:
                         new_qty = st.number_input("Quantity / Amount", min_value=1, value=int(med_data["Quantity"]))
                         
-                    new_cycle = st.selectbox("Cycle Type", [30, 90, 28], index=[30, 90, 28].index(med_data["Cycle"]))
+                    # Find the current cycle in the list, or default to 30 if it isn't found
+                    current_cycle = med_data.get("Cycle", 30)
+                    cycle_index = CYCLE_OPTIONS.index(current_cycle) if current_cycle in CYCLE_OPTIONS else 1
+                    
+                    new_cycle = st.selectbox("Cycle Type", CYCLE_OPTIONS, index=cycle_index)
                     new_date = st.date_input("Next Sync Date", value=med_data["Next Sync Date"])
                     
                     if st.form_submit_button("✏️ Save Changes"):
